@@ -8,7 +8,7 @@
     "start": "node node_modules/next/dist/bin/next start --port $PORT"
   },
   "engines": {
-    "node": ">=18.17.0 <19"
+    "node": ">=18.16.0"
   },
   "dependencies": {
     "next": "13.5.7",
