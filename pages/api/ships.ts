@@ -73,7 +73,7 @@ function mmsiToFlag(mmsi: string): { flag: string; flagEmoji: string } {
     '455': ['Oman', '🇴🇲'],          '447': ['Kuwait', '🇰🇼'],
     '408': ['Iraq', '🇮🇶'],
   }
-  return map[mid] ?? ['Unknown', '🏳️']
+  return map[mid] ? { flag: map[mid][0], flagEmoji: map[mid][1] } : { flag: 'Unknown', flagEmoji: '🏳️' }
 }
 
 // ── AISHub live fetch ────────────────────────────────────────────────────────
