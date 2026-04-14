@@ -33,66 +33,56 @@ const STATUS_LABEL: Record<StreamStatus, string> = {
   disconnected: 'RECONNECTING…',
 }
 
-export default function Home() {
-  const [ships, setShips]           = useState<Ship[]>([])
-  const [selected, setSelected]     = useState<Ship | null>(null)
-  const [lastFetch, setLastFetch]   = useState('')
-  const [source, setSource]         = useState('')
-  const [loading, setLoading]       = useState(false)
-  const [streamStatus, setStreamStatus] = useState<StreamStatus>('off')
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+const aisstreamKey = process.env.NEXT_PUBLIC_AISSTREAM_API_KEY
 
-  // Ship state as a map for fast updates from WebSocket
-  const shipsMapRef = useRef<Map<string, Ship>>(new Map())
+export default function Home() {
+  const [ships, setShips]               = useState<Ship[]>([])
+  const [selected, setSelected]         = useState<Ship | null>(null)
+  const [lastFetch, setLastFetch]       = useState('')
+  const [loading, setLoading]           = useState(false)
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>('off')
+  const [vesselCount, setVesselCount]   = useState(0) // real vessels seen via stream
+  const intervalRef   = useRef<NodeJS.Timeout | null>(null)
+  const shipsMapRef   = useRef<Map<string, Ship>>(new Map())
+  const usingStream   = !!aisstreamKey
 
   const fetchShips = useCallback(async () => {
+    // If AISStream is configured, skip mock data — map starts empty and fills from WebSocket
+    if (usingStream) return
     setLoading(true)
     try {
       const res  = await fetch('/api/ships')
       const data = await res.json()
       const newShips: Ship[] = data.ships
-      // Merge: WebSocket positions override API positions for known ships
-      newShips.forEach(s => {
-        const existing = shipsMapRef.current.get(s.mmsi)
-        if (existing) {
-          shipsMapRef.current.set(s.mmsi, { ...s, lat: existing.lat, lng: existing.lng, speed: existing.speed, course: existing.course })
-        } else {
-          shipsMapRef.current.set(s.mmsi, s)
-        }
-      })
+      newShips.forEach(s => { if (!shipsMapRef.current.has(s.mmsi)) shipsMapRef.current.set(s.mmsi, s) })
       setShips(Array.from(shipsMapRef.current.values()))
       setLastFetch(data.meta.fetchedAt)
-      setSource(data.meta.source)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [usingStream])
 
   useEffect(() => {
     fetchShips()
-    // When AISStream is live, still refresh static data every 5 min; otherwise 60s
-    const interval = streamStatus === 'live' ? 300000 : 60000
-    intervalRef.current = setInterval(fetchShips, interval)
+    intervalRef.current = setInterval(fetchShips, 60000)
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
-  }, [fetchShips, streamStatus])
+  }, [fetchShips])
 
   const handleUpdateShip = useCallback((mmsi: string, patch: Partial<Ship>) => {
-    shipsMapRef.current.set(mmsi, { ...shipsMapRef.current.get(mmsi)!, ...patch })
+    const prev = shipsMapRef.current.get(mmsi)
+    if (prev) shipsMapRef.current.set(mmsi, { ...prev, ...patch })
     setShips(Array.from(shipsMapRef.current.values()))
-    setSelected(prev => prev?.mmsi === mmsi ? { ...prev, ...patch } : prev)
+    setSelected(s => s?.mmsi === mmsi ? { ...s, ...patch } : s)
   }, [])
 
   const handleAddShip = useCallback((ship: Ship) => {
     shipsMapRef.current.set(ship.mmsi, ship)
     setShips(Array.from(shipsMapRef.current.values()))
+    setVesselCount(c => c + 1)
+    setLastFetch(new Date().toISOString())
   }, [])
 
-  const handleStreamStatus = useCallback((s: StreamStatus) => {
-    setStreamStatus(s)
-    if (s === 'live') setSource('AISStream.io — real-time WebSocket')
-  }, [])
-
-  const aisstreamKey = process.env.NEXT_PUBLIC_AISSTREAM_API_KEY
+  const handleStreamStatus = useCallback((s: StreamStatus) => setStreamStatus(s), [])
 
   const { addKnownMMSI } = useAISStream({
     apiKey:         aisstreamKey,
@@ -101,17 +91,17 @@ export default function Home() {
     onStatusChange: handleStreamStatus,
   })
 
-  // Register all loaded ships as known MMSIs for the stream hook
-  useEffect(() => {
-    ships.forEach(s => addKnownMMSI(s.mmsi))
-  }, [ships, addKnownMMSI])
+  useEffect(() => { ships.forEach(s => addKnownMMSI(s.mmsi)) }, [ships, addKnownMMSI])
 
   const handleSelectShip = useCallback((ship: Ship) => setSelected(ship), [])
+
+  const isLive    = streamStatus === 'live'
+  const isEmpty   = ships.length === 0
 
   return (
     <>
       <Head>
-        <title>Hormuz Strait — Ship Traffic</title>
+        <title>Hormuz Strait — AIS Tracker</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
@@ -122,49 +112,37 @@ export default function Home() {
           <span className="text-sm font-bold tracking-widest text-gray-100 uppercase">
             Strait of Hormuz — AIS Tracker
           </span>
-
-          {/* Stream status badge */}
           <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold
-            ${streamStatus === 'live' ? 'bg-green-900 text-green-300' :
-              streamStatus === 'connecting' ? 'bg-yellow-900 text-yellow-300' :
-              streamStatus === 'disconnected' ? 'bg-red-900 text-red-300' :
-              'bg-gray-800 text-gray-500'}`}>
+            ${isLive                        ? 'bg-green-900 text-green-300' :
+              streamStatus === 'connecting'  ? 'bg-yellow-900 text-yellow-300' :
+              streamStatus === 'disconnected'? 'bg-red-900 text-red-300' :
+                                              'bg-gray-800 text-gray-500'}`}>
             <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT[streamStatus]}`} />
             {STATUS_LABEL[streamStatus]}
           </span>
-
-          <span className="ml-auto text-xs text-gray-500 hidden sm:block" />
         </div>
 
         {/* Data source banner */}
-        {(() => {
-          const isLive = streamStatus === 'live'
-          return (
-            <div className={`flex items-center gap-2 px-4 py-1.5 text-xs border-b border-gray-800
-              ${isLive ? 'bg-green-950 text-green-300' : 'bg-yellow-950 text-yellow-300'}`}>
-              <span className="font-bold">
-                {isLive ? '🟢 LIVE DATA' : '🟡 MOCK DATA'}
-              </span>
-              <span className="opacity-75">
-                {isLive
-                  ? '— AISStream.io WebSocket · real vessels updating in real time'
-                  : `— ${source}`}
-              </span>
-            </div>
-          )
-        })()}
+        <div className={`flex items-center gap-2 px-4 py-1.5 text-xs border-b border-gray-800
+          ${isLive ? 'bg-green-950 text-green-300' : 'bg-yellow-950 text-yellow-300'}`}>
+          <span className="font-bold">{isLive ? '🟢 LIVE DATA' : '🟡 MOCK DATA'}</span>
+          <span className="opacity-75">
+            {isLive
+              ? `— AISStream.io WebSocket · ${ships.length} real vessel${ships.length !== 1 ? 's' : ''} in area`
+              : '— No AISStream key · showing simulated vessels'}
+          </span>
+        </div>
 
         <StatsBar ships={ships} lastFetch={lastFetch} onRefresh={fetchShips} loading={loading} />
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Ship list sidebar */}
+          {/* Sidebar */}
           <div className="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-700 overflow-y-auto hidden md:flex flex-col">
             <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-widest border-b border-gray-700">
               Vessels ({ships.length})
             </div>
             {ships.map(ship => (
-              <button key={ship.mmsi}
-                onClick={() => handleSelectShip(ship)}
+              <button key={ship.mmsi} onClick={() => handleSelectShip(ship)}
                 className={`flex flex-col px-3 py-2 text-left border-b border-gray-800 transition-colors hover:bg-gray-800
                   ${selected?.mmsi === ship.mmsi ? 'bg-gray-800' : ''}`}>
                 <div className="flex items-center gap-2">
@@ -183,28 +161,36 @@ export default function Home() {
 
           {/* Map */}
           <div className="flex-1 relative">
-            <ShipMap
-              ships={ships}
-              selectedMmsi={selected?.mmsi ?? null}
-              onSelectShip={handleSelectShip}
-            />
+            <ShipMap ships={ships} selectedMmsi={selected?.mmsi ?? null} onSelectShip={handleSelectShip} />
+
+            {/* Waiting overlay — shown until first real vessel arrives */}
+            {usingStream && isEmpty && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center z-[400] pointer-events-none">
+                <div className="bg-gray-900 bg-opacity-90 border border-gray-700 rounded-xl px-8 py-6 text-center">
+                  <div className="text-2xl mb-2">📡</div>
+                  <div className="text-white font-semibold mb-1">
+                    {streamStatus === 'connecting' ? 'Connecting to AISStream…' : 'Waiting for vessels…'}
+                  </div>
+                  <div className="text-gray-400 text-xs">
+                    Listening on Strait of Hormuz · 24–27.5°N 54–60.5°E
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Legend */}
             <div className="absolute bottom-4 left-4 bg-gray-900 bg-opacity-90 rounded-lg p-3 text-xs border border-gray-700 z-[500]">
               <div className="text-gray-400 font-semibold mb-2 uppercase tracking-wider">Legend</div>
-              {Object.entries({
-                Tanker: '#f59e0b', Container: '#3b82f6', Bulk: '#8b5cf6',
-                Cargo: '#10b981', Naval: '#ef4444', Tug: '#6b7280',
-              }).map(([label, color]) => (
-                <div key={label} className="flex items-center gap-2 mb-1">
-                  <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                  <span className="text-gray-300">{label}</span>
-                </div>
+              {Object.entries({ Tanker:'#f59e0b', Container:'#3b82f6', Bulk:'#8b5cf6', Cargo:'#10b981', Naval:'#ef4444', Tug:'#6b7280' })
+                .map(([label, color]) => (
+                  <div key={label} className="flex items-center gap-2 mb-1">
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                    <span className="text-gray-300">{label}</span>
+                  </div>
               ))}
             </div>
           </div>
 
-          {/* Detail panel */}
           {selected && (
             <div className="w-72 flex-shrink-0 border-l border-gray-700">
               <ShipDetail ship={selected} onClose={() => setSelected(null)} />
