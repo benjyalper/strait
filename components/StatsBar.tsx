@@ -49,8 +49,8 @@ export default function StatsBar({ ships, lastFetch, onRefresh, loading }: Props
         ))}
       </div>
 
-      <div className="text-gray-600 text-xs ml-auto">
-        {lastFetch ? `Updated ${new Date(lastFetch).toLocaleTimeString()}` : ''}
+      <div className="text-gray-300 text-xs ml-auto font-mono">
+        {lastFetch ? `⏱ ${new Date(lastFetch).toLocaleTimeString()}` : ''}
       </div>
 
       <button onClick={onRefresh} disabled={loading}
