@@ -273,9 +273,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // 3. Mock fallback
   const ships = getMockShips()
-  const hint = !aishubUser && !vfKey
-    ? 'Mock data — set AISHUB_USERNAME or VESSELFINDER_API_KEY in .env.local'
-    : 'Live API error — showing mock data'
+  const hint = 'Mock data — initial load only, AISStream WebSocket provides live updates'
   return res.status(200).json({
     ships,
     meta: { fetchedAt: new Date().toISOString(), source: hint, area: 'Strait of Hormuz', totalVessels: ships.length, live: false },

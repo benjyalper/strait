@@ -137,13 +137,22 @@ export default function Home() {
         </div>
 
         {/* Data source banner */}
-        <div className={`flex items-center gap-2 px-4 py-1.5 text-xs border-b border-gray-800
-          ${source.includes('live') || source.includes('AISStream') ? 'bg-green-950 text-green-300' : 'bg-yellow-950 text-yellow-300'}`}>
-          <span className="font-bold">
-            {source.includes('live') || source.includes('AISStream') ? '🟢 LIVE DATA' : '🟡 MOCK DATA'}
-          </span>
-          <span className="text-opacity-75 opacity-75">— {source}</span>
-        </div>
+        {(() => {
+          const isLive = streamStatus === 'live'
+          return (
+            <div className={`flex items-center gap-2 px-4 py-1.5 text-xs border-b border-gray-800
+              ${isLive ? 'bg-green-950 text-green-300' : 'bg-yellow-950 text-yellow-300'}`}>
+              <span className="font-bold">
+                {isLive ? '🟢 LIVE DATA' : '🟡 MOCK DATA'}
+              </span>
+              <span className="opacity-75">
+                {isLive
+                  ? '— AISStream.io WebSocket · real vessels updating in real time'
+                  : `— ${source}`}
+              </span>
+            </div>
+          )
+        })()}
 
         <StatsBar ships={ships} lastFetch={lastFetch} onRefresh={fetchShips} loading={loading} />
 
