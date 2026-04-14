@@ -1,7 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import type { Ship, ShipType } from '../pages/api/ships'
 
-// AIS type number → category (same mapping as server)
 function aisTypeToCategory(t: number): ShipType {
   if (t >= 80 && t <= 89) return 'tanker'
   if (t >= 70 && t <= 79) return 'cargo'
@@ -38,7 +37,7 @@ function mmsiToFlag(mmsi: string): { flag: string; flagEmoji: string } {
   return map[mid] ? { flag: map[mid][0], flagEmoji: map[mid][1] } : { flag: 'Unknown', flagEmoji: '🏳️' }
 }
 
-type UpdateShipFn = (mmsi: string, patch: Partial<Ship> | ((prev: Ship) => Ship)) => void
+type UpdateShipFn = (mmsi: string, patch: Partial<Ship>) => void
 type AddShipFn   = (ship: Ship) => void
 
 interface Options {
@@ -49,49 +48,62 @@ interface Options {
 }
 
 export function useAISStream({ apiKey, onUpdateShip, onAddShip, onStatusChange }: Options) {
-  const wsRef        = useRef<WebSocket | null>(null)
-  const reconnectRef = useRef<NodeJS.Timeout | null>(null)
-  const mountedRef   = useRef(true)
-  const knownMMSIs   = useRef<Set<string>>(new Set())
+  const wsRef             = useRef<WebSocket | null>(null)
+  const reconnectRef      = useRef<NodeJS.Timeout | null>(null)
+  const mountedRef        = useRef(true)
+  const intentionalClose  = useRef(false)   // prevents reconnect loop when WE close the socket
+  const knownMMSIs        = useRef<Set<string>>(new Set())
+
+  // Keep callbacks stable across renders
+  const onUpdateRef = useRef(onUpdateShip)
+  const onAddRef    = useRef(onAddShip)
+  const onStatusRef = useRef(onStatusChange)
+  onUpdateRef.current = onUpdateShip
+  onAddRef.current    = onAddShip
+  onStatusRef.current = onStatusChange
 
   const addKnownMMSI = useCallback((mmsi: string) => { knownMMSIs.current.add(mmsi) }, [])
 
   const connect = useCallback(() => {
     if (!apiKey || !mountedRef.current) return
-    if (wsRef.current) wsRef.current.close()
 
-    onStatusChange('connecting')
+    // Close existing socket intentionally (won't trigger reconnect)
+    if (wsRef.current && wsRef.current.readyState < 2) {
+      intentionalClose.current = true
+      wsRef.current.close()
+    }
+
+    onStatusRef.current('connecting')
     const ws = new WebSocket('wss://stream.aisstream.io/v0/stream')
     wsRef.current = ws
 
     ws.onopen = () => {
+      if (!mountedRef.current) { ws.close(); return }
       ws.send(JSON.stringify({
         APIKey: apiKey,
         BoundingBoxes: [[[24.0, 54.0], [27.5, 60.5]]],
         FilterMessageTypes: ['PositionReport'],
       }))
-      onStatusChange('live')
+      onStatusRef.current('live')
     }
 
     ws.onmessage = (evt) => {
       try {
         const msg = JSON.parse(evt.data)
         if (msg.MessageType !== 'PositionReport') return
-
         const pr   = msg.Message?.PositionReport
         const meta = msg.MetaData
         if (!pr || !meta) return
 
-        const mmsi    = String(meta.MMSI ?? pr.UserID ?? '')
-        const lat     = Number(meta.latitude  ?? pr.Latitude  ?? 0)
-        const lng     = Number(meta.longitude ?? pr.Longitude ?? 0)
+        const mmsi = String(meta.MMSI ?? pr.UserID ?? '')
+        const lat  = Number(meta.latitude  ?? pr.Latitude  ?? 0)
+        const lng  = Number(meta.longitude ?? pr.Longitude ?? 0)
         if (!mmsi || lat === 0 || lng === 0) return
 
         const now = new Date().toISOString()
 
         if (knownMMSIs.current.has(mmsi)) {
-          // Update existing ship position
-          onUpdateShip(mmsi, {
+          onUpdateRef.current(mmsi, {
             lat,
             lng,
             speed:      +(Number(pr.Sog ?? 0)).toFixed(1),
@@ -101,45 +113,40 @@ export function useAISStream({ apiKey, onUpdateShip, onAddShip, onStatusChange }
             lastUpdate: now,
           })
         } else {
-          // New vessel — add it
           knownMMSIs.current.add(mmsi)
           const { flag, flagEmoji } = mmsiToFlag(mmsi)
           const typeNum = Number(pr.Type ?? 0)
-          onAddShip({
+          onAddRef.current({
             mmsi,
-            name:       String(meta.ShipName ?? 'Unknown').trim() || 'Unknown',
-            type:       aisTypeToCategory(typeNum),
-            flag,
-            flagEmoji,
-            lat,
-            lng,
-            speed:      +(Number(pr.Sog ?? 0)).toFixed(1),
-            course:     Number(pr.Cog ?? 0),
-            heading:    Number(pr.TrueHeading ?? pr.Cog ?? 0),
-            destination: '—',
-            origin:     '—',
-            draught:    0,
-            length:     0,
-            dwt:        0,
-            cargo:      typeNum >= 80 && typeNum <= 89 ? 'Tanker cargo' : '—',
-            lastUpdate: now,
-            status:     navstatToStatus(Number(pr.NavigationalStatus ?? 0)),
-            imo:        '—',
-            callsign:   '—',
+            name:        String(meta.ShipName ?? 'Unknown').trim() || 'Unknown',
+            type:        aisTypeToCategory(typeNum),
+            flag, flagEmoji, lat, lng,
+            speed:       +(Number(pr.Sog ?? 0)).toFixed(1),
+            course:      Number(pr.Cog ?? 0),
+            heading:     Number(pr.TrueHeading ?? pr.Cog ?? 0),
+            destination: '—', origin: '—', draught: 0, length: 0, dwt: 0,
+            cargo:       typeNum >= 80 && typeNum <= 89 ? 'Tanker cargo' : '—',
+            lastUpdate:  now,
+            status:      navstatToStatus(Number(pr.NavigationalStatus ?? 0)),
+            imo: '—', callsign: '—',
           })
         }
       } catch { /* ignore parse errors */ }
     }
 
-    ws.onerror = () => onStatusChange('disconnected')
+    ws.onerror = () => { /* onclose will fire next */ }
 
     ws.onclose = () => {
-      onStatusChange('disconnected')
+      // If WE closed it intentionally (to reconnect), don't schedule another
+      if (intentionalClose.current) {
+        intentionalClose.current = false
+        return
+      }
+      onStatusRef.current('disconnected')
       if (!mountedRef.current) return
-      // Reconnect after 5s
       reconnectRef.current = setTimeout(connect, 5000)
     }
-  }, [apiKey, onUpdateShip, onAddShip, onStatusChange])
+  }, [apiKey]) // only re-create when apiKey changes
 
   useEffect(() => {
     mountedRef.current = true
@@ -147,7 +154,10 @@ export function useAISStream({ apiKey, onUpdateShip, onAddShip, onStatusChange }
     return () => {
       mountedRef.current = false
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
-      wsRef.current?.close()
+      if (wsRef.current) {
+        intentionalClose.current = true
+        wsRef.current.close()
+      }
     }
   }, [apiKey, connect])
 
