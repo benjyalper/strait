@@ -82,7 +82,10 @@ export default function Home() {
     setLastFetch(new Date().toISOString())
   }, [])
 
-  const handleStreamStatus = useCallback((s: StreamStatus) => setStreamStatus(s), [])
+  const handleStreamStatus = useCallback((s: StreamStatus) => {
+    setStreamStatus(s)
+    if (s === 'live') setLastFetch(new Date().toISOString())
+  }, [])
 
   const { addKnownMMSI } = useAISStream({
     apiKey:         aisstreamKey,
