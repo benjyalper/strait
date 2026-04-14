@@ -10,6 +10,10 @@
   "engines": {
     "node": ">=18.16.0"
   },
+  "optionalDependencies": {
+    "@next/swc-linux-x64-gnu": "13.5.7",
+    "@next/swc-linux-x64-musl": "13.5.7"
+  },
   "dependencies": {
     "next": "13.5.7",
     "react": "^18",
