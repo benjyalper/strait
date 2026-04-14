@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "node node_modules/next/dist/bin/next dev --port 3006",
     "build": "node node_modules/next/dist/bin/next build",
-    "start": "node node_modules/next/dist/bin/next start --port 3006"
+    "start": "node node_modules/next/dist/bin/next start --port $PORT"
+  },
+  "engines": {
+    "node": ">=18.17.0 <19"
   },
   "dependencies": {
     "next": "13.5.7",
