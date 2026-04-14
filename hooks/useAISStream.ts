@@ -161,5 +161,5 @@ export function useAISStream({ apiKey, onUpdateShip, onAddShip, onStatusChange }
     }
   }, [apiKey, connect])
 
-  return { addKnownMMSI }
+  return { addKnownMMSI, reconnect: connect }
 }

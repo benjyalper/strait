@@ -44,11 +44,17 @@ export default function Home() {
   const [vesselCount, setVesselCount]   = useState(0) // real vessels seen via stream
   const intervalRef   = useRef<NodeJS.Timeout | null>(null)
   const shipsMapRef   = useRef<Map<string, Ship>>(new Map())
+  const reconnectRef  = useRef<() => void>(() => {})
   const usingStream   = !!aisstreamKey
 
   const fetchShips = useCallback(async () => {
-    // If AISStream is configured, skip mock data — map starts empty and fills from WebSocket
-    if (usingStream) return
+    if (usingStream) {
+      shipsMapRef.current.clear()
+      setShips([])
+      setSelected(null)
+      reconnectRef.current()
+      return
+    }
     setLoading(true)
     try {
       const res  = await fetch('/api/ships')
@@ -87,13 +93,14 @@ export default function Home() {
     if (s === 'live') setLastFetch(new Date().toISOString())
   }, [])
 
-  const { addKnownMMSI } = useAISStream({
+  const { addKnownMMSI, reconnect } = useAISStream({
     apiKey:         aisstreamKey,
     onUpdateShip:   handleUpdateShip,
     onAddShip:      handleAddShip,
     onStatusChange: handleStreamStatus,
   })
 
+  useEffect(() => { reconnectRef.current = reconnect }, [reconnect])
   useEffect(() => { ships.forEach(s => addKnownMMSI(s.mmsi)) }, [ships, addKnownMMSI])
 
   const handleSelectShip = useCallback((ship: Ship) => setSelected(ship), [])
